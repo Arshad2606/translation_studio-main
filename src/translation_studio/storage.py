@@ -94,6 +94,18 @@ class StudioStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_memories(self, limit: int = 200) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM translation_memory
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def upsert_memory(self, source_text: str, target_text: str, source_lang: str, target_lang: str, domain: str = "General") -> None:
         now = utc_now()
         with self.connect() as conn:

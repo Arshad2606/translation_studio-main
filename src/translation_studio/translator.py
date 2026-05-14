@@ -17,6 +17,7 @@ LANGUAGE_HINTS = {
     "German": "de",
     "Japanese": "ja",
     "Hindi": "hi",
+    "Marathi": "mr",
     "Arabic": "ar",
     "Portuguese": "pt",
     "Italian": "it",
@@ -28,6 +29,7 @@ class TranslatorConfig:
     provider: str = os.getenv("TRANSLATION_PROVIDER", "auto").lower()
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    mistral_model: str = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
 
 
 class TranslationEngine:
@@ -45,6 +47,7 @@ class TranslationEngine:
         provider = self.config.provider
         errors: list[str] = []
         gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+        mistral_key = os.getenv("MISTRAL_API_KEY", "").strip()
         openai_key = os.getenv("OPENAI_API_KEY", "").strip()
 
         if provider in {"auto", "gemini"} and gemini_key:
@@ -58,6 +61,18 @@ class TranslationEngine:
             errors.append("Gemini: missing GEMINI_API_KEY")
         elif provider == "auto":
             errors.append("Gemini: no GEMINI_API_KEY")
+
+        if provider in {"auto", "mistral"} and mistral_key:
+            try:
+                return self._translate_with_mistral(text, source_lang, target_lang, glossary, profile)
+            except Exception as exc:
+                errors.append(f"Mistral: {exc}")
+                if provider == "mistral":
+                    return fallback_with_reason(text, target_lang, glossary, errors)
+        elif provider == "mistral":
+            errors.append("Mistral: missing MISTRAL_API_KEY")
+        elif provider == "auto":
+            errors.append("Mistral: no MISTRAL_API_KEY")
 
         if provider in {"auto", "openai"} and openai_key:
             try:
@@ -165,6 +180,64 @@ class TranslationEngine:
             raise RuntimeError("Gemini returned no text")
         return enforce_glossary(translated.strip(), glossary)
 
+    def _translate_with_mistral(
+        self,
+        text: str,
+        source_lang: str,
+        target_lang: str,
+        glossary: list[GlossaryEntry],
+        profile: StyleProfile,
+    ) -> str:
+        api_key = os.environ["MISTRAL_API_KEY"].strip()
+        glossary_text = "\n".join(f"- {entry.source_term} => {entry.target_term}" for entry in glossary) or "None"
+        payload = {
+            "model": self.config.mistral_model,
+            "temperature": 0.1,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an enterprise translation engine. Return only the translated segment, "
+                        "with no commentary. Translate faithfully, preserve placeholders, numbers, "
+                        "markdown, tags, product names, and formatting. Use the glossary exactly."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Source language: {source_lang}\n"
+                        f"Target language: {target_lang}\n"
+                        f"Tone: {profile.tone}\n"
+                        f"Audience: {profile.audience}\n"
+                        f"Style rules: {profile.rules}\n"
+                        f"Glossary:\n{glossary_text}\n\n"
+                        f"Translate this segment only:\n{text}"
+                    ),
+                },
+            ],
+        }
+        request = urllib.request.Request(
+            "https://api.mistral.ai/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=45) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")[:500]
+            raise RuntimeError(f"Mistral HTTP {exc.code}: {detail}") from exc
+
+        translated = extract_chat_completion_text(data)
+        if not translated:
+            raise RuntimeError("Mistral returned no text")
+        return enforce_glossary(translated.strip(), glossary)
+
 
 def enforce_glossary(text: str, glossary: list[GlossaryEntry]) -> str:
     output = text
@@ -181,6 +254,19 @@ def extract_gemini_text(data: dict) -> str:
         for part in candidate.get("content", {}).get("parts", []):
             if "text" in part:
                 pieces.append(part["text"])
+    return "\n".join(piece for piece in pieces if piece).strip()
+
+
+def extract_chat_completion_text(data: dict) -> str:
+    pieces: list[str] = []
+    for choice in data.get("choices", []):
+        content = choice.get("message", {}).get("content", "")
+        if isinstance(content, str):
+            pieces.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    pieces.append(part["text"])
     return "\n".join(piece for piece in pieces if piece).strip()
 
 
@@ -211,6 +297,10 @@ def local_fallback_translate(text: str, target_lang: str) -> str:
         "Japanese": {
             "document": "文書", "translation": "翻訳", "quality": "品質", "password": "パスワード",
             "account": "アカウント", "user": "ユーザー", "approved": "承認済み", "source": "原文", "target": "訳文",
+        },
+        "Marathi": {
+            "document": "dastaevaj", "translation": "bhashantar", "quality": "gunavatta", "password": "paravli",
+            "account": "khate", "user": "vaparakarata", "approved": "manjur", "source": "srot", "target": "lakshya",
         },
     }
     words = lexicons.get(target_lang, {})

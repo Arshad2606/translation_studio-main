@@ -39,7 +39,7 @@ from translation_studio.workflow import prepare_translation_units
 
 
 DB_PATH = ROOT / "data" / "translation_studio.sqlite3"
-LANGUAGES = ["Spanish", "Japanese", "French", "German", "Hindi", "Arabic", "Portuguese", "Italian"]
+LANGUAGES = ["Spanish", "Japanese", "French", "German", "Hindi", "Marathi", "Arabic", "Portuguese", "Italian"]
 STATE = {"segments": [], "issues": [], "units": []}
 
 
@@ -149,7 +149,7 @@ class TranslationStudioHandler(BaseHTTPRequestHandler):
         self.respond(render_page(self.store, f"Imported {count} translation memory rows."))
 
     def export_memory(self) -> None:
-        memories = self.store.get_memories("English", "Spanish", "General")
+        memories = self.store.list_memories()
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=["source_text", "target_text", "source_lang", "target_lang", "domain"])
         writer.writeheader()
@@ -181,8 +181,9 @@ def render_page(store: StudioStore, notice: str = "") -> str:
     provider_options = "".join(
         f"<option value='{value}'>{label}</option>"
         for value, label in [
-            ("auto", "Auto: Gemini, OpenAI, Local"),
+            ("auto", "Auto: Gemini, Mistral, OpenAI, Local"),
             ("gemini", "Gemini only"),
+            ("mistral", "Mistral only"),
             ("openai", "OpenAI only"),
             ("local", "Local draft only"),
         ]
@@ -190,6 +191,7 @@ def render_page(store: StudioStore, notice: str = "") -> str:
     profile_options = "".join(f"<option>{html.escape(profile.name)}</option>" for profile in profiles)
     issue_html = render_issues(issues)
     unit_html = render_units(units)
+    memory_html = render_memory(store.list_memories())
     audit_html = "".join(
         f"<tr><td>{event['created_at']}</td><td>{html.escape(event['event_type'])}</td><td>{html.escape(event['source_text'][:80])}</td></tr>"
         for event in audit
@@ -257,6 +259,12 @@ def render_page(store: StudioStore, notice: str = "") -> str:
     {unit_html}
   </section>
   <section class="panel">
+    <h2>Translation Memory</h2>
+    <p class="muted">Approved translations saved by this studio. The domain column is the memory tag used when matching future documents.</p>
+    <p><a href="/memory.csv">Download all memory as CSV</a></p>
+    {memory_html}
+  </section>
+  <section class="panel">
     <h2>Glossary</h2>
     <form action="/glossary" method="post">
       <div class="grid">
@@ -301,14 +309,17 @@ def render_issues(issues) -> str:
 def render_provider_status() -> str:
     provider = os.getenv("TRANSLATION_PROVIDER", "auto")
     gemini_key = "configured" if os.getenv("GEMINI_API_KEY", "").strip() else "missing"
+    mistral_key = "configured" if os.getenv("MISTRAL_API_KEY", "").strip() else "missing"
     openai_key = "configured" if os.getenv("OPENAI_API_KEY", "").strip() else "missing"
     gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    mistral_model = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
     openai_model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     return (
         "<section class='panel'>"
         "<b>Provider status</b>"
-        f"<p class='muted'>Default provider: {html.escape(provider)} · "
-        f"Gemini key: {gemini_key} ({html.escape(gemini_model)}) · "
+        f"<p class='muted'>Default provider: {html.escape(provider)} | "
+        f"Gemini key: {gemini_key} ({html.escape(gemini_model)}) | "
+        f"Mistral key: {mistral_key} ({html.escape(mistral_model)}) | "
         f"OpenAI key: {openai_key} ({html.escape(openai_model)})</p>"
         "</section>"
     )
@@ -329,7 +340,7 @@ def render_units(units) -> str:
           <input type="hidden" name="index" value="{index}">
           <div>
             <span class="badge">{html.escape(unit.status.value)}</span>
-            <p><b>Source {unit.segment.index}</b> · {html.escape(unit.segment.block_type)}</p>
+            <p><b>Source {unit.segment.index}</b> - {html.escape(unit.segment.block_type)}</p>
             <p>{html.escape(unit.segment.text)}</p>
             <p class="muted">Glossary hits: {html.escape(glossary)}</p>
             <ul>{suggestions}</ul>
@@ -341,6 +352,29 @@ def render_units(units) -> str:
           </div>
         </form>""")
     return "".join(blocks)
+
+
+def render_memory(memories: list[dict]) -> str:
+    if not memories:
+        return "<p class='muted'>No approved translation memory has been stored yet.</p>"
+    rows = []
+    for memory in memories:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(memory['source_lang'])}</td>"
+            f"<td>{html.escape(memory['target_lang'])}</td>"
+            f"<td>{html.escape(memory['domain'])}</td>"
+            f"<td>{html.escape(memory['source_text'])}</td>"
+            f"<td>{html.escape(memory['target_text'])}</td>"
+            f"<td>{html.escape(memory['updated_at'])}</td>"
+            "</tr>"
+        )
+    return (
+        "<table><thead><tr><th>Source</th><th>Target</th><th>Tag</th><th>Source text</th>"
+        "<th>Stored translation</th><th>Updated</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
+    )
 
 
 def parse_multipart(handler: BaseHTTPRequestHandler) -> tuple[dict[str, str], dict[str, dict]]:

@@ -27,7 +27,7 @@ from translation_studio.workflow import prepare_translation_units
 
 
 DB_PATH = ROOT / "data" / "translation_studio.sqlite3"
-LANGUAGES = ["Spanish", "Japanese", "French", "German", "Hindi", "Arabic", "Portuguese", "Italian"]
+LANGUAGES = ["Spanish", "Japanese", "French", "German", "Hindi", "Marathi", "Arabic", "Portuguese", "Italian"]
 
 
 st.set_page_config(page_title="Translation Studio", layout="wide", page_icon="TS")
@@ -66,7 +66,7 @@ def main() -> None:
         profile_names = [profile.name for profile in profiles]
         selected_profile_name = st.selectbox("Style profile", profile_names)
         profile = next(profile for profile in profiles if profile.name == selected_profile_name)
-        provider = st.selectbox("LLM provider", ["auto", "gemini", "openai", "local"], index=0)
+        provider = st.selectbox("LLM provider", ["auto", "gemini", "mistral", "openai", "local"], index=0)
         auto_translate = st.toggle("Translate new segments automatically", value=True)
 
     tab_upload, tab_review, tab_memory, tab_audit = st.tabs(["Upload & QA", "Translate & Approve", "Memory & Glossary", "Audit Trail"])
